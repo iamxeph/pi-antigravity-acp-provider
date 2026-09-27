@@ -19,6 +19,7 @@ const parentFixture = fileURLToPath(new URL("./fixtures/watchdog-parent.mjs", im
 const agentFixture = fileURLToPath(new URL("./fixtures/long-agent.mjs", import.meta.url));
 const ignoreTermFixture = fileURLToPath(new URL("./fixtures/ignore-term.mjs", import.meta.url));
 const exitAgentFixture = fileURLToPath(new URL("./fixtures/exit-agent.mjs", import.meta.url));
+const envDumpFixture = fileURLToPath(new URL("./fixtures/env-dump-agent.mjs", import.meta.url));
 const cleanupPids = new Set<number>();
 
 afterEach(() => {
@@ -121,7 +122,53 @@ describe("applyDefaultTlsEnvironment", () => {
 		const env = applyDefaultTlsEnvironment({}, exists);
 		expect(env.SSL_CERT_FILE).toBeUndefined();
 	});
-ts)
+
+	it("propagates the resolved SSL_CERT_FILE to the spawned supervisor process", async () => {
+		// Integration check for the real spawn path: applyDefaultTlsEnvironment
+		// runs inside AntigravityProcess's constructor, and the supervisor
+		// forwards its environment to the supervised agent unchanged.
+		const child = new AntigravityProcess({
+			cwd: process.cwd(),
+			entryPath: envDumpFixture,
+			args: [],
+			env: { ...process.env, SSL_CERT_FILE: "/custom/integration-ca.crt" },
+		});
+		const exit = await Promise.race([
+			child.exited,
+			delay(2_000).then(() => {
+				throw new Error("env-dump agent did not exit");
+			}),
+		]);
+		expect(exit.code).toBe(0);
+		const reported = JSON.parse(exit.stderrTail) as { sslCertFile: string | null };
+		expect(reported.sslCertFile).toBe("/custom/integration-ca.crt");
+	});
+
+	it("injects a detected fallback bundle when SSL_CERT_FILE is unset", async () => {
+		// Simulate an environment with no SSL_CERT_FILE (NixOS/minimal Linux) by
+		// passing a filtered env; applyDefaultTlsEnvironment must detect the
+		// real system bundle and the supervisor must forward it.
+		const baseEnv: NodeJS.ProcessEnv = { ...process.env };
+		delete baseEnv.SSL_CERT_FILE;
+		const detected = resolveDefaultSslCertFile(baseEnv);
+		if (!detected) return; // nothing to detect on this machine
+		const child = new AntigravityProcess({
+			cwd: process.cwd(),
+			entryPath: envDumpFixture,
+			args: [],
+			env: baseEnv,
+		});
+		const exit = await Promise.race([
+			child.exited,
+			delay(2_000).then(() => {
+				throw new Error("env-dump agent did not exit");
+			}),
+		]);
+		expect(exit.code).toBe(0);
+		const reported = JSON.parse(exit.stderrTail) as { sslCertFile: string | null };
+		expect(reported.sslCertFile).toBe(detected);
+	});
+});
 describe.skipIf(process.platform === "win32")("parent-death supervisor", () => {
 	it("escalates from TERM to KILL for a stuck direct child", async () => {
 		const child = new AntigravityProcess({
