@@ -39,8 +39,9 @@ export function resolveNodeBinary(execPath?: string): string {
 	// by the caller/package manager) is trusted as-is: NixOS names its node
 	// wrapper "nodejs", and basename matching would silently discard a valid
 	// override when no ambient node exists.
-	if (execPath) return execPath;
-	const candidate = process.env.NODE || process.execPath;
+	const explicit = execPath || process.env.NODE;
+	if (explicit) return explicit;
+	const candidate = process.execPath;
 	const base = (candidate.split(/[\\/]/).pop() ?? "").toLowerCase();
 	// When Pi is distributed as a standalone executable (e.g. NixOS package,
 	// SEA, or packaged release), process.execPath points to the pi binary rather

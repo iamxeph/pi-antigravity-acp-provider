@@ -65,6 +65,19 @@ describe("resolveNodeBinary", () => {
 		);
 	});
 
+	it("preserves a nonstandard NODE environment variable override with no ambient node", () => {
+		const original = process.env.NODE;
+		try {
+			process.env.NODE = "/nix/store/xxym3ni0yy0wq9c0r2i5dp2akqc8h444-nodejs-22.12.0/bin/nodejs";
+			expect(resolveNodeBinary()).toBe(
+				"/nix/store/xxym3ni0yy0wq9c0r2i5dp2akqc8h444-nodejs-22.12.0/bin/nodejs",
+			);
+		} finally {
+			if (original === undefined) delete process.env.NODE;
+			else process.env.NODE = original;
+		}
+	});
+
 	it("respects custom NODE environment variable override", () => {
 		const original = process.env.NODE;
 		try {
