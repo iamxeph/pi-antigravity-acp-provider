@@ -98,10 +98,36 @@ describe("resolveNodeBinary", () => {
 	});
 });
 
-describe("applyDefaultTlsEnvironment", () => {
-	it("preserves explicit SSL_CERT_FILE if present and existing", () => {
+describe("resolveDefaultSslCertFile", () => {
+	it("returns existing SSL_CERT_FILE if present and file exists", () => {
 		const exists = (p: string) => p === "/custom/ca.crt";
-		const env = applyDefaultTlsEnvironment({ SSL_CERT_FILE: "/custom/ca.crt" }, exists);
+		expect(resolveDefaultSslCertFile({ SSL_CERT_FILE: "/custom/ca.crt" }, exists)).toBe("/custom/ca.crt");
+	});
+
+	it("falls back to NIX_SSL_CERT_FILE if SSL_CERT_FILE does not exist", () => {
+		const exists = (p: string) => p === "/nix/ca.crt";
+		expect(
+			resolveDefaultSslCertFile(
+				{ SSL_CERT_FILE: "/broken/ca.crt", NIX_SSL_CERT_FILE: "/nix/ca.crt" },
+				exists,
+			),
+		).toBe("/nix/ca.crt");
+	});
+
+	it("falls back to system CA bundle when neither env var points to an existing file", () => {
+		const exists = (p: string) => p === "/etc/ssl/certs/ca-bundle.crt";
+		expect(resolveDefaultSslCertFile({}, exists)).toBe("/etc/ssl/certs/ca-bundle.crt");
+	});
+
+	it("returns undefined when no candidates exist", () => {
+		const exists = () => false;
+		expect(resolveDefaultSslCertFile({}, exists)).toBeUndefined();
+	});
+});
+
+describe("applyDefaultTlsEnvironment", () => {
+	it("preserves explicit SSL_CERT_FILE if already set", () => {
+		const env = applyDefaultTlsEnvironment({ SSL_CERT_FILE: "/custom/ca.crt" });
 		expect(env.SSL_CERT_FILE).toBe("/custom/ca.crt");
 	});
 
@@ -167,6 +193,41 @@ describe("applyDefaultTlsEnvironment", () => {
 		expect(exit.code).toBe(0);
 		const reported = JSON.parse(exit.stderrTail) as { sslCertFile: string | null };
 		expect(reported.sslCertFile).toBe(detected);
+	});
+
+	it("propagates custom-CA environment when running as a standalone Pi binary", async () => {
+		// Simulates running inside a standalone Pi binary (process.execPath
+		// points to pi rather than node). resolveNodeBinary must fall back to
+		// ambient "node" to spawn the supervisor, and the injected CA bundle
+		// must propagate through supervisor to the agent.
+		const originalExecPath = process.execPath;
+		const originalNode = process.env.NODE;
+		delete process.env.NODE;
+		try {
+			Object.defineProperty(process, "execPath", {
+				value: "/nix/store/ai9szyf9fivph9rdk65gzjiy30sll754-pi-0.87.1/libexec/pi/pi",
+				configurable: true,
+			});
+			const child = new AntigravityProcess({
+				cwd: process.cwd(),
+				entryPath: envDumpFixture,
+				args: [],
+				env: { ...process.env, SSL_CERT_FILE: "/custom/standalone-ca.crt" },
+			});
+			const exit = await Promise.race([
+				child.exited,
+				delay(2_000).then(() => {
+					throw new Error("env-dump agent did not exit");
+				}),
+			]);
+			expect(exit.code).toBe(0);
+			const reported = JSON.parse(exit.stderrTail) as { sslCertFile: string | null };
+			expect(reported.sslCertFile).toBe("/custom/standalone-ca.crt");
+		} finally {
+			Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
+			if (originalNode === undefined) delete process.env.NODE;
+			else process.env.NODE = originalNode;
+		}
 	});
 });
 describe.skipIf(process.platform === "win32")("parent-death supervisor", () => {
