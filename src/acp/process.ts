@@ -35,7 +35,12 @@ export function resolveAntigravityAcpEntry(): string {
 }
 
 export function resolveNodeBinary(execPath?: string): string {
-	const candidate = execPath || process.env.NODE || process.execPath;
+	// An explicitly provided executable (entry option or NODE env override set
+	// by the caller/package manager) is trusted as-is: NixOS names its node
+	// wrapper "nodejs", and basename matching would silently discard a valid
+	// override when no ambient node exists.
+	if (execPath) return execPath;
+	const candidate = process.env.NODE || process.execPath;
 	const base = (candidate.split(/[\\/]/).pop() ?? "").toLowerCase();
 	// When Pi is distributed as a standalone executable (e.g. NixOS package,
 	// SEA, or packaged release), process.execPath points to the pi binary rather

@@ -33,9 +33,36 @@ describe("resolveNodeBinary", () => {
 	});
 
 	it("falls back to ambient node when process.execPath is a standalone binary like pi", () => {
-		expect(resolveNodeBinary("/nix/store/ai9szyf9fivph9rdk65gzjiy30sll754-pi-0.87.1/libexec/pi/pi")).toBe("node");
-		expect(resolveNodeBinary("/usr/local/bin/pi")).toBe("node");
-		expect(resolveNodeBinary("C:\\bin\\pi.exe")).toBe("node");
+		// resolveNodeBinary() with no explicit override evaluates
+		// process.execPath; stub it to simulate running inside a standalone
+		// Pi binary with no NODE env override.
+		const original = process.execPath;
+		const originalNode = process.env.NODE;
+		delete process.env.NODE;
+		try {
+			for (const piExecPath of [
+				"/nix/store/ai9szyf9fivph9rdk65gzjiy30sll754-pi-0.87.1/libexec/pi/pi",
+				"/usr/local/bin/pi",
+				"C:\\bin\\pi.exe",
+			]) {
+				Object.defineProperty(process, "execPath", { value: piExecPath, configurable: true });
+				expect(resolveNodeBinary()).toBe("node");
+			}
+		} finally {
+			Object.defineProperty(process, "execPath", { value: original, configurable: true });
+			if (originalNode === undefined) delete process.env.NODE;
+			else process.env.NODE = originalNode;
+		}
+	});
+
+	it("preserves a nonstandard explicit NODE override with no ambient node", () => {
+		// NixOS names its node wrapper "nodejs" and may have no `node` on
+		// PATH; discarding the override would return the ambient "node" and
+		// fail to spawn. An explicit override is trusted regardless of
+		// basename.
+		expect(resolveNodeBinary("/nix/store/xxym3ni0yy0wq9c0r2i5dp2akqc8h444-nodejs-22.12.0/bin/nodejs")).toBe(
+			"/nix/store/xxym3ni0yy0wq9c0r2i5dp2akqc8h444-nodejs-22.12.0/bin/nodejs",
+		);
 	});
 
 	it("respects custom NODE environment variable override", () => {
